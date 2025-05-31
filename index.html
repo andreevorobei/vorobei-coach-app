@@ -443,7 +443,9 @@
                                     role: user.email.includes('coach') ? 'coach' : 'client'
                                 });
                                 setCurrentView('dashboard');
-                                await loadUserData(user.uid);
+                                
+                                // Загружаем данные пользователя после установки currentUser
+                                setTimeout(() => loadUserData(user.uid), 100);
                             } catch (error) {
                                 console.error('Error saving user data:', error);
                             }
@@ -468,8 +470,43 @@
                         dataService.getTasks(userId)
                     ]);
                     
-                    setLifeAreas(areasData);
-                    setTasks(tasksData);
+                    // Если данных нет, создаем начальные данные
+                    if (areasData.length === 0) {
+                        const defaultLifeAreas = [
+                            { id: 1, name: 'Здоровье', current: 6, target: 10, color: '#22c55e' },
+                            { id: 2, name: 'Бизнес/Карьера', current: 7, target: 10, color: '#3b82f6' },
+                            { id: 3, name: 'Духовная сфера', current: 5, target: 10, color: '#8b5cf6' },
+                            { id: 4, name: 'Личностный рост', current: 8, target: 10, color: '#f59e0b' },
+                            { id: 5, name: 'Отношения', current: 6, target: 10, color: '#ef4444' },
+                            { id: 6, name: 'Финансы', current: 5, target: 10, color: '#10b981' },
+                            { id: 7, name: 'Досуг/Хобби', current: 7, target: 10, color: '#f97316' },
+                            { id: 8, name: 'Семья', current: 8, target: 10, color: '#ec4899' }
+                        ];
+                        
+                        await dataService.updateLifeAreas(userId, defaultLifeAreas);
+                        setLifeAreas(defaultLifeAreas);
+                        showNotification('Добро пожаловать! Оцените ваши сферы жизни');
+                    } else {
+                        setLifeAreas(areasData);
+                    }
+                    
+                    // Если задач нет, создаем демо-задачу
+                    if (tasksData.length === 0) {
+                        const demoTask = {
+                            areaId: 1,
+                            title: 'Добро пожаловать в Воробей!',
+                            description: 'Изучите приложение и создайте свои первые задачи',
+                            result: 'Освоение системы развития',
+                            reward: 'Понимание как работать с приложением',
+                            penalty: '',
+                            plannedDate: new Date().toISOString().split('T')[0]
+                        };
+                        
+                        const newTask = await dataService.createTask(userId, demoTask);
+                        setTasks([newTask]);
+                    } else {
+                        setTasks(tasksData);
+                    }
 
                     // Если коуч, загрузить клиентов
                     if (currentUser?.role === 'coach' && isFirebaseConfigured) {
@@ -477,6 +514,7 @@
                         setClients(clientsData);
                     }
                 } catch (error) {
+                    console.error('Error loading user data:', error);
                     showNotification('Ошибка загрузки данных', 'error');
                 } finally {
                     setLoading(false);
@@ -492,14 +530,15 @@
             const handleGoogleLogin = async () => {
                 if (!isFirebaseConfigured) {
                     // Демо режим
-                    setCurrentUser({
+                    const user = {
                         id: 'demo-user',
                         name: 'Демо Пользователь',
                         email: 'demo@example.com',
                         role: 'client'
-                    });
+                    };
+                    setCurrentUser(user);
                     setCurrentView('dashboard');
-                    await loadUserData('demo-user');
+                    setTimeout(() => loadUserData('demo-user'), 100);
                     return;
                 }
 
@@ -518,14 +557,15 @@
             const handleEmailLogin = async (email, password) => {
                 if (!isFirebaseConfigured) {
                     // Демо режим
-                    setCurrentUser({
+                    const user = {
                         id: 'demo-user',
                         name: email.includes('coach') ? 'Демо Коуч' : 'Демо Клиент',
                         email: email,
                         role: email.includes('coach') ? 'coach' : 'client'
-                    });
+                    };
+                    setCurrentUser(user);
                     setCurrentView('dashboard');
-                    await loadUserData('demo-user');
+                    setTimeout(() => loadUserData('demo-user'), 100);
                     return;
                 }
 
@@ -684,12 +724,10 @@
                 return (
                     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
                         <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md fade-in">
-                            <div className="text-center mb-8">
+                            <div className="text-center mb-4">
                                 <h1 className="text-3xl font-bold text-gray-800 mb-2">🐦 Воробей</h1>
                                 <p className="text-gray-600">Коучинговое приложение для развития</p>
                             </div>
-                            
-                            <FirebaseWarning />
                             
                             <div className="space-y-6">
                                 <div>
@@ -760,8 +798,454 @@
                 );
             };
 
-            // Остальные компоненты (колесо, задачи, etc.) остаются такими же...
-            // Для краткости не буду дублировать весь код, основные изменения - это интеграция с Firebase
+            // Компонент колеса баланса
+            const LifeWheel = () => {
+                const centerX = 150;
+                const centerY = 150;
+                const radius = 110;
+                const segments = lifeAreas.length;
+                
+                if (segments === 0) return <LoadingSpinner />;
+                
+                const angleStep = (2 * Math.PI) / segments;
+
+                return (
+                    <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg wheel-container">
+                        <h3 className="text-xl font-semibold mb-4 text-center">Колесо баланса</h3>
+                        <div className="flex justify-center">
+                            <svg width="300" height="300" className="drop-shadow-sm max-w-full">
+                                {/* Концентрические круги */}
+                                {[2, 4, 6, 8, 10].map(level => (
+                                    <circle
+                                        key={level}
+                                        cx={centerX}
+                                        cy={centerY}
+                                        r={(radius * level) / 10}
+                                        fill="none"
+                                        stroke="#e5e7eb"
+                                        strokeWidth="1"
+                                    />
+                                ))}
+                                
+                                {/* Разделительные линии */}
+                                {lifeAreas.map((_, index) => {
+                                    const angle = index * angleStep - Math.PI / 2;
+                                    const x2 = centerX + radius * Math.cos(angle);
+                                    const y2 = centerY + radius * Math.sin(angle);
+                                    return (
+                                        <line
+                                            key={index}
+                                            x1={centerX}
+                                            y1={centerY}
+                                            x2={x2}
+                                            y2={y2}
+                                            stroke="#e5e7eb"
+                                            strokeWidth="1"
+                                        />
+                                    );
+                                })}
+                                
+                                {/* Области */}
+                                {lifeAreas.map((area, index) => {
+                                    const angle1 = index * angleStep - Math.PI / 2;
+                                    const angle2 = (index + 1) * angleStep - Math.PI / 2;
+                                    const currentRadius = (radius * area.current) / 10;
+                                    
+                                    const x1 = centerX + currentRadius * Math.cos(angle1);
+                                    const y1 = centerY + currentRadius * Math.sin(angle1);
+                                    const x2 = centerX + currentRadius * Math.cos(angle2);
+                                    const y2 = centerY + currentRadius * Math.sin(angle2);
+                                    
+                                    const largeArcFlag = angleStep > Math.PI ? 1 : 0;
+                                    
+                                    const pathData = [
+                                        `M ${centerX} ${centerY}`,
+                                        `L ${x1} ${y1}`,
+                                        `A ${currentRadius} ${currentRadius} 0 ${largeArcFlag} 1 ${x2} ${y2}`,
+                                        'Z'
+                                    ].join(' ');
+                                    
+                                    return (
+                                        <path
+                                            key={area.id}
+                                            d={pathData}
+                                            fill={area.color}
+                                            fillOpacity="0.6"
+                                            stroke={area.color}
+                                            strokeWidth="2"
+                                            className="hover:fill-opacity-80 cursor-pointer transition-all"
+                                            onClick={() => {
+                                                setSelectedArea(area);
+                                                setShowAreaDetail(true);
+                                            }}
+                                        />
+                                    );
+                                })}
+                                
+                                {/* Подписи */}
+                                {lifeAreas.map((area, index) => {
+                                    const angle = index * angleStep - Math.PI / 2;
+                                    const labelRadius = radius + 30;
+                                    const x = centerX + labelRadius * Math.cos(angle);
+                                    const y = centerY + labelRadius * Math.sin(angle);
+                                    
+                                    return (
+                                        <text
+                                            key={`label-${area.id}`}
+                                            x={x}
+                                            y={y}
+                                            textAnchor="middle"
+                                            dominantBaseline="central"
+                                            className="text-xs font-medium fill-gray-700"
+                                        >
+                                            {area.name}
+                                        </text>
+                                    );
+                                })}
+                            </svg>
+                        </div>
+                        
+                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                            {lifeAreas.map(area => (
+                                <div key={area.id} className="flex items-center space-x-2">
+                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor: area.color}}></div>
+                                    <span className="text-gray-700 truncate">{area.name}: {area.current}/10</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            // Детальный вид сферы
+            const AreaDetail = () => {
+                if (!selectedArea) return null;
+
+                const areaTasks = tasks.filter(task => task.areaId === selectedArea.id);
+
+                return (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-screen overflow-y-auto fade-in">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-2xl font-semibold" style={{color: selectedArea.color}}>
+                                    {selectedArea.name}
+                                </h3>
+                                <button
+                                    onClick={() => setShowAreaDetail(false)}
+                                    className="text-gray-400 hover:text-gray-600 p-1"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div className="mb-6">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-sm font-medium text-gray-700">Текущий уровень</span>
+                                    <span className="text-lg font-bold">{selectedArea.current}/10</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-3">
+                                    <div
+                                        className="h-3 rounded-full transition-all duration-500"
+                                        style={{
+                                            backgroundColor: selectedArea.color,
+                                            width: `${(selectedArea.current / 10) * 100}%`
+                                        }}
+                                    ></div>
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Обновить оценку
+                                </label>
+                                <div className="flex flex-wrap gap-2">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => (
+                                        <button
+                                            key={score}
+                                            onClick={() => updateAreaScore(selectedArea.id, score)}
+                                            className={`w-8 h-8 rounded-full text-sm font-medium transition-colors ${
+                                                score === selectedArea.current
+                                                    ? 'text-white'
+                                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                            }`}
+                                            style={{
+                                                backgroundColor: score === selectedArea.current ? selectedArea.color : undefined
+                                            }}
+                                        >
+                                            {score}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-lg font-semibold mb-4">Задачи в этой сфере</h4>
+                                {areaTasks.length === 0 ? (
+                                    <p className="text-gray-500 text-center py-8">
+                                        Пока нет задач в этой сфере
+                                    </p>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {areaTasks.map(task => (
+                                            <div key={task.id} className="border rounded-lg p-4">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1">
+                                                        <h5 className="font-medium text-gray-800 mb-1">{task.title}</h5>
+                                                        <p className="text-sm text-gray-600 mb-2">{task.description}</p>
+                                                        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                                                            <span className="flex items-center">
+                                                                📅 {task.plannedDate}
+                                                            </span>
+                                                            <span className={`px-2 py-1 rounded-full text-xs ${
+                                                                task.status === 'completed' 
+                                                                    ? 'bg-green-100 text-green-700'
+                                                                    : task.status === 'in-progress'
+                                                                    ? 'bg-yellow-100 text-yellow-700'
+                                                                    : 'bg-gray-100 text-gray-700'
+                                                            }`}>
+                                                                {task.status === 'completed' ? '✅ Выполнено' : 
+                                                                 task.status === 'in-progress' ? '⏳ В процессе' : '📋 К выполнению'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => toggleTaskStatus(task.id)}
+                                                        className={`p-2 rounded-full transition-colors ${
+                                                            task.status === 'completed' 
+                                                                ? 'bg-green-100 text-green-600' 
+                                                                : 'bg-gray-100 text-gray-400 hover:bg-green-100 hover:text-green-600'
+                                                        }`}
+                                                    >
+                                                        ✓
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            // Компонент списка задач
+            const TaskList = () => {
+                const getTasksByDate = () => {
+                    const today = new Date().toISOString().split('T')[0];
+                    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+                    
+                    return {
+                        today: tasks.filter(task => task.plannedDate === today),
+                        tomorrow: tasks.filter(task => task.plannedDate === tomorrow),
+                        thisWeek: tasks.filter(task => {
+                            const taskDate = new Date(task.plannedDate);
+                            const weekStart = new Date();
+                            const weekEnd = new Date(Date.now() + 7 * 86400000);
+                            return taskDate >= weekStart && taskDate <= weekEnd && task.plannedDate !== today && task.plannedDate !== tomorrow;
+                        }),
+                        later: tasks.filter(task => {
+                            const taskDate = new Date(task.plannedDate);
+                            const weekEnd = new Date(Date.now() + 7 * 86400000);
+                            return taskDate > weekEnd;
+                        })
+                    };
+                };
+
+                const TaskCard = ({ task }) => {
+                    const area = lifeAreas.find(a => a.id === task.areaId);
+                    
+                    return (
+                        <div className="bg-white p-4 rounded-lg shadow-md border-l-4 hover:shadow-lg transition-all task-card" 
+                             style={{borderLeftColor: area?.color}}>
+                            <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                    <h4 className="font-medium text-gray-800 mb-1">{task.title}</h4>
+                                    <p className="text-sm text-gray-600 mb-2">{task.description}</p>
+                                    {task.result && (
+                                        <p className="text-sm text-blue-600 mb-2">
+                                            🎯 {task.result}
+                                        </p>
+                                    )}
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mb-2">
+                                        <span className="flex items-center">
+                                            <div className="w-2 h-2 rounded-full mr-1" style={{backgroundColor: area?.color}}></div>
+                                            {area?.name}
+                                        </span>
+                                        <span className="flex items-center">
+                                            📅 {task.plannedDate}
+                                        </span>
+                                    </div>
+                                    {(task.reward || task.penalty) && (
+                                        <div className="flex flex-wrap gap-2 text-xs">
+                                            {task.reward && (
+                                                <span className="bg-green-100 text-green-700 px-2 py-1 rounded">
+                                                    🎁 {task.reward}
+                                                </span>
+                                            )}
+                                            {task.penalty && (
+                                                <span className="bg-red-100 text-red-700 px-2 py-1 rounded">
+                                                    ⚠️ {task.penalty}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                <button
+                                    onClick={() => toggleTaskStatus(task.id)}
+                                    className={`p-2 rounded-full transition-colors ml-2 ${
+                                        task.status === 'completed' 
+                                            ? 'bg-green-100 text-green-600' 
+                                            : 'bg-gray-100 text-gray-400 hover:bg-green-100 hover:text-green-600'
+                                    }`}
+                                >
+                                    ✓
+                                </button>
+                            </div>
+                        </div>
+                    );
+                };
+
+                const tasksByDate = getTasksByDate();
+
+                return (
+                    <div className="space-y-6">
+                        {Object.entries(tasksByDate).map(([period, periodTasks]) => {
+                            const titles = {
+                                today: '📅 Сегодня',
+                                tomorrow: '⏰ Завтра', 
+                                thisWeek: '📝 На этой неделе',
+                                later: '🔮 Позже'
+                            };
+                            
+                            if (periodTasks.length === 0) return null;
+                            
+                            return (
+                                <div key={period} className="fade-in">
+                                    <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                                        {titles[period]}
+                                        <span className="ml-2 bg-gray-200 text-gray-600 text-sm px-2 py-1 rounded-full">
+                                            {periodTasks.length}
+                                        </span>
+                                    </h3>
+                                    <div className="space-y-3">
+                                        {periodTasks.map(task => (
+                                            <TaskCard key={task.id} task={task} />
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            };
+
+            // Форма новой задачи
+            const NewTaskForm = () => (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-screen overflow-y-auto fade-in">
+                        <h3 className="text-xl font-semibold mb-4">➕ Новая задача</h3>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Сфера жизни</label>
+                                <select
+                                    value={newTask.areaId}
+                                    onChange={(e) => setNewTask({...newTask, areaId: parseInt(e.target.value)})}
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    {lifeAreas.map(area => (
+                                        <option key={area.id} value={area.id}>{area.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Название задачи</label>
+                                <input
+                                    type="text"
+                                    value={newTask.title}
+                                    onChange={(e) => setNewTask({...newTask, title: e.target.value})}
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Опишите задачу"
+                                />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
+                                <textarea
+                                    value={newTask.description}
+                                    onChange={(e) => setNewTask({...newTask, description: e.target.value})}
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    rows="3"
+                                    placeholder="Подробное описание задачи"
+                                />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Ожидаемый результат</label>
+                                <input
+                                    type="text"
+                                    value={newTask.result}
+                                    onChange={(e) => setNewTask({...newTask, result: e.target.value})}
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Какой результат должен быть достигнут"
+                                />
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">🎁 Вознаграждение</label>
+                                    <input
+                                        type="text"
+                                        value={newTask.reward}
+                                        onChange={(e) => setNewTask({...newTask, reward: e.target.value})}
+                                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        placeholder="За выполнение"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">⚠️ Штраф</label>
+                                    <input
+                                        type="text"
+                                        value={newTask.penalty}
+                                        onChange={(e) => setNewTask({...newTask, penalty: e.target.value})}
+                                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        placeholder="За невыполнение"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">📅 Планируемая дата</label>
+                                <input
+                                    type="date"
+                                    value={newTask.plannedDate}
+                                    onChange={(e) => setNewTask({...newTask, plannedDate: e.target.value})}
+                                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            
+                            <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 pt-4">
+                                <button
+                                    onClick={createTask}
+                                    disabled={loading}
+                                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                >
+                                    {loading ? <LoadingSpinner /> : 'Создать задачу'}
+                                </button>
+                                <button
+                                    onClick={() => setShowNewTaskForm(false)}
+                                    className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg hover:bg-gray-300 transition-colors"
+                                >
+                                    Отмена
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
 
             // Главный дашборд
             const Dashboard = () => {
@@ -778,7 +1262,6 @@
                     );
                 }
 
-                // Простой дашборд для демонстрации
                 return (
                     <div className="min-h-screen bg-gray-50">
                         <header className="bg-white shadow-sm border-b sticky top-0 z-40">
@@ -791,99 +1274,190 @@
                                         </span>
                                     </div>
                                     
-                                    <div className="flex items-center space-x-4">
-                                        {!isFirebaseConfigured && (
-                                            <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                                                ДЕМО
-                                            </span>
-                                        )}
+                                    <nav className="flex items-center space-x-2">
+                                        <button
+                                            onClick={() => setCurrentView('dashboard')}
+                                            className={`px-3 py-2 rounded-lg transition-colors flex items-center space-x-1 ${
+                                                currentView === 'dashboard' 
+                                                    ? 'bg-blue-100 text-blue-700' 
+                                                    : 'text-gray-600 hover:text-gray-900'
+                                            }`}
+                                        >
+                                            🏠
+                                            <span className="hidden sm:inline ml-1">Главная</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setCurrentView('tasks')}
+                                            className={`px-3 py-2 rounded-lg transition-colors flex items-center space-x-1 ${
+                                                currentView === 'tasks' 
+                                                    ? 'bg-blue-100 text-blue-700' 
+                                                    : 'text-gray-600 hover:text-gray-900'
+                                            }`}
+                                        >
+                                            ✅
+                                            <span className="hidden sm:inline ml-1">Задачи</span>
+                                        </button>
                                         <button
                                             onClick={handleLogout}
                                             className="text-gray-600 hover:text-gray-900 px-3 py-2"
                                         >
-                                            🚪 Выйти
+                                            🚪
                                         </button>
-                                    </div>
+                                    </nav>
                                 </div>
                             </div>
                         </header>
 
-                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                            <FirebaseWarning />
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                                <div className="bg-white p-6 rounded-xl shadow-lg fade-in">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-600">Средний балл</p>
-                                            <p className="text-3xl font-bold text-gray-900">{averageScore}/10</p>
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8 mobile-padding">
+                            {currentView === 'dashboard' && (
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-8">
+                                    {/* Статистика */}
+                                    <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6 md:mb-8">
+                                        <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg fade-in">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-600">Средний балл</p>
+                                                    <p className="text-2xl md:text-3xl font-bold text-gray-900">{averageScore}/10</p>
+                                                    <p className="text-xs text-gray-500 mt-1">По всем сферам жизни</p>
+                                                </div>
+                                                <div className="bg-blue-100 p-3 rounded-full">
+                                                    📊
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="bg-blue-100 p-3 rounded-full">📊</div>
-                                    </div>
-                                </div>
-                                
-                                <div className="bg-white p-6 rounded-xl shadow-lg fade-in">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-600">Выполнено задач</p>
-                                            <p className="text-3xl font-bold text-gray-900">{completedTasks}/{totalTasks}</p>
+                                        
+                                        <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg fade-in">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-600">Выполнено задач</p>
+                                                    <p className="text-2xl md:text-3xl font-bold text-gray-900">{completedTasks}/{totalTasks}</p>
+                                                    <p className="text-xs text-gray-500 mt-1">Общий прогресс</p>
+                                                </div>
+                                                <div className="bg-green-100 p-3 rounded-full">
+                                                    ✅
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="bg-green-100 p-3 rounded-full">✅</div>
-                                    </div>
-                                </div>
-                                
-                                <div className="bg-white p-6 rounded-xl shadow-lg fade-in">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-600">Прогресс</p>
-                                            <p className="text-3xl font-bold text-gray-900">{totalTasks > 0 ? Math.round((completedTasks/totalTasks)*100) : 0}%</p>
+                                        
+                                        <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg fade-in">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-600">Прогресс недели</p>
+                                                    <p className="text-2xl md:text-3xl font-bold text-gray-900">{totalTasks > 0 ? Math.round((completedTasks/totalTasks)*100) : 0}%</p>
+                                                    <p className="text-xs text-gray-500 mt-1">Завершенность</p>
+                                                </div>
+                                                <div className="bg-purple-100 p-3 rounded-full">
+                                                    📈
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="bg-purple-100 p-3 rounded-full">📈</div>
                                     </div>
-                                </div>
-                            </div>
 
-                            {!isFirebaseConfigured && (
-                                <div className="bg-white p-6 rounded-xl shadow-lg mb-8">
-                                    <h3 className="text-lg font-semibold mb-4">🚀 Чтобы получить полную версию:</h3>
-                                    <ol className="list-decimal list-inside space-y-2 text-sm">
-                                        <li>Создайте проект на <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Firebase Console</a></li>
-                                        <li>Скопируйте настройки Firebase</li>
-                                        <li>Вставьте их в код вместо "YOUR_API_KEY" и т.д.</li>
-                                        <li>Настройте Firestore Database и Authentication</li>
-                                        <li>Деплойте обновленную версию</li>
-                                    </ol>
-                                    <p className="text-sm text-gray-600 mt-4">
-                                        После настройки получите: многопользовательскую систему, связь коуч-клиент, 
-                                        синхронизацию между устройствами, авторизацию через Google.
-                                    </p>
+                                    {/* Колесо баланса */}
+                                    <div className="lg:col-span-2 fade-in">
+                                        <LifeWheel />
+                                    </div>
+
+                                    {/* Текущие задачи */}
+                                    <div className="space-y-4 md:space-y-6 fade-in">
+                                        <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h3 className="text-lg md:text-xl font-semibold">📅 Задачи на сегодня</h3>
+                                                <button
+                                                    onClick={() => setShowNewTaskForm(true)}
+                                                    className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors"
+                                                >
+                                                    ➕
+                                                </button>
+                                            </div>
+                                            
+                                            <div className="space-y-3">
+                                                {todayTasks.length === 0 ? (
+                                                    <p className="text-gray-500 text-center py-4 mobile-text">
+                                                        На сегодня задач нет 🎉
+                                                    </p>
+                                                ) : (
+                                                    todayTasks.slice(0, 3).map(task => {
+                                                        const area = lifeAreas.find(a => a.id === task.areaId);
+                                                        return (
+                                                            <div key={task.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                                                                <button
+                                                                    onClick={() => toggleTaskStatus(task.id)}
+                                                                    className={`p-1 rounded-full ${
+                                                                        task.status === 'completed' 
+                                                                            ? 'text-green-600' 
+                                                                            : 'text-gray-400'
+                                                                    }`}
+                                                                >
+                                                                    ✓
+                                                                </button>
+                                                                <div className="flex-1">
+                                                                    <p className="font-medium text-gray-800 mobile-text">{task.title}</p>
+                                                                    <p className="text-sm text-gray-600">{area?.name}</p>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                            
+                                            <button
+                                                onClick={() => setCurrentView('tasks')}
+                                                className="w-full mt-4 text-blue-600 hover:text-blue-700 text-sm font-medium"
+                                            >
+                                                Посмотреть все задачи →
+                                            </button>
+                                        </div>
+
+                                        {/* Быстрые действия */}
+                                        <div className="bg-white p-4 md:p-6 rounded-xl shadow-lg">
+                                            <h3 className="text-lg md:text-xl font-semibold mb-4">⚡ Быстрые действия</h3>
+                                            <div className="space-y-3">
+                                                <button
+                                                    onClick={() => setShowNewTaskForm(true)}
+                                                    className="w-full bg-blue-50 text-blue-700 p-3 rounded-lg hover:bg-blue-100 transition-colors flex items-center space-x-2"
+                                                >
+                                                    <span>➕</span>
+                                                    <span>Добавить задачу</span>
+                                                </button>
+                                                <button
+                                                    onClick={() => setCurrentView('tasks')}
+                                                    className="w-full bg-green-50 text-green-700 p-3 rounded-lg hover:bg-green-100 transition-colors flex items-center space-x-2"
+                                                >
+                                                    <span>📊</span>
+                                                    <span>{currentUser?.role === 'coach' ? 'Просмотр прогресса' : 'Мои задачи'}</span>
+                                                </button>
+                                                <div className="text-sm text-gray-600 p-3 bg-gray-50 rounded-lg mobile-text">
+                                                    💡 {currentUser?.role === 'coach' 
+                                                        ? 'Создавайте задачи для клиентов и отслеживайте их прогресс'
+                                                        : 'Отмечайте выполненные задачи для отслеживания прогресса'
+                                                    }
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
-                            
-                            <div className="text-center py-12">
-                                <h2 className="text-2xl font-bold text-gray-800 mb-4">
-                                    🎉 Приложение готово к работе!
-                                </h2>
-                                <p className="text-gray-600 mb-6">
-                                    {isFirebaseConfigured 
-                                        ? 'Полная версия с базой данных и многопользовательской системой'
-                                        : 'Демо версия - настройте Firebase для полной функциональности'
-                                    }
-                                </p>
-                                <div className="flex flex-wrap justify-center gap-4">
-                                    <div className="bg-green-100 text-green-800 px-4 py-2 rounded-lg">
-                                        ✅ PWA готово к установке
+
+                            {currentView === 'tasks' && (
+                                <div className="fade-in">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 space-y-4 md:space-y-0">
+                                        <h2 className="text-xl md:text-2xl font-bold text-gray-900">📋 Управление задачами</h2>
+                                        <button
+                                            onClick={() => setShowNewTaskForm(true)}
+                                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                                        >
+                                            <span>➕</span>
+                                            <span>Новая задача</span>
+                                        </button>
                                     </div>
-                                    <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded-lg">
-                                        📱 Мобильная версия
-                                    </div>
-                                    <div className="bg-purple-100 text-purple-800 px-4 py-2 rounded-lg">
-                                        🎨 Красивый интерфейс
-                                    </div>
+                                    <TaskList />
                                 </div>
-                            </div>
+                            )}
                         </div>
 
+                        {showNewTaskForm && <NewTaskForm />}
+                        {showAreaDetail && <AreaDetail />}
                         <NotificationComponent />
                     </div>
                 );
