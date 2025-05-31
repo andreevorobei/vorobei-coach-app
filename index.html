@@ -252,15 +252,21 @@
                 }
 
                 try {
+                    console.log('Loading tasks for user:', userId);
                     const snapshot = await db.collection('tasks')
                         .where('userId', '==', userId)
                         .orderBy('createdAt', 'desc')
                         .get();
                     
-                    return snapshot.docs.map(doc => ({
+                    const tasks = snapshot.docs.map(doc => ({
                         id: doc.id,
-                        ...doc.data()
+                        ...doc.data(),
+                        // Преобразуем Firestore Timestamp в string для даты
+                        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || new Date().toISOString()
                     }));
+                    
+                    console.log('Loaded tasks:', tasks.length, tasks);
+                    return tasks;
                 } catch (error) {
                     console.error('Error getting tasks:', error);
                     return [];
@@ -283,6 +289,7 @@
                 }
 
                 try {
+                    console.log('Creating task in Firebase with data:', taskData);
                     const newTask = {
                         ...taskData,
                         userId: userId,
@@ -292,10 +299,21 @@
                     };
                     
                     const docRef = await db.collection('tasks').add(newTask);
-                    return { id: docRef.id, ...newTask };
+                    console.log('Task created with ID:', docRef.id);
+                    
+                    // Возвращаем задачу с реальными данными
+                    const createdTask = {
+                        id: docRef.id,
+                        ...taskData,
+                        userId: userId,
+                        status: 'todo',
+                        createdAt: new Date().toISOString()
+                    };
+                    
+                    return createdTask;
                 } catch (error) {
-                    console.error('Error creating task:', error);
-                    throw error;
+                    console.error('Error creating task in Firebase:', error);
+                    throw new Error('Не удалось создать задачу: ' + error.message);
                 }
             }
 
@@ -310,14 +328,16 @@
                 }
 
                 try {
+                    console.log('Updating task:', taskId, 'with:', updates);
                     await db.collection('tasks').doc(taskId).update({
                         ...updates,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
+                    console.log('Task updated successfully');
                     return true;
                 } catch (error) {
                     console.error('Error updating task:', error);
-                    throw error;
+                    throw new Error('Не удалось обновить задачу: ' + error.message);
                 }
             }
 
@@ -436,18 +456,21 @@
                                     lastLogin: firebase.firestore.FieldValue.serverTimestamp()
                                 }, { merge: true });
                                 
-                                setCurrentUser({
+                                const userData = {
                                     id: user.uid,
                                     name: user.displayName || user.email,
                                     email: user.email,
                                     role: user.email.includes('coach') ? 'coach' : 'client'
-                                });
+                                };
+                                
+                                setCurrentUser(userData);
                                 setCurrentView('dashboard');
                                 
-                                // Загружаем данные пользователя после установки currentUser
-                                setTimeout(() => loadUserData(user.uid), 100);
+                                // Загружаем данные пользователя
+                                loadUserData(user.uid);
                             } catch (error) {
                                 console.error('Error saving user data:', error);
+                                showNotification('Ошибка авторизации', 'error');
                             }
                         } else {
                             setCurrentUser(null);
@@ -457,8 +480,8 @@
 
                     return () => unsubscribe();
                 } else {
-                    // Локальный режим для демо
-                    loadUserData('demo-user');
+                    // Локальный режим для демо - не загружаем данные здесь
+                    console.log('Firebase not configured, running in demo mode');
                 }
             }, []);
 
@@ -483,8 +506,8 @@
                             { id: 8, name: 'Семья', current: 8, target: 10, color: '#ec4899' }
                         ];
                         
-                        await dataService.updateLifeAreas(userId, defaultLifeAreas);
                         setLifeAreas(defaultLifeAreas);
+                        await dataService.updateLifeAreas(userId, defaultLifeAreas);
                         showNotification('Добро пожаловать! Оцените ваши сферы жизни');
                     } else {
                         setLifeAreas(areasData);
@@ -615,16 +638,32 @@
             const toggleTaskStatus = async (taskId) => {
                 try {
                     const task = tasks.find(t => t.id === taskId);
-                    const newStatus = task.status === 'completed' ? 'todo' : 'completed';
+                    if (!task) {
+                        showNotification('Задача не найдена', 'error');
+                        return;
+                    }
                     
-                    await dataService.updateTask(taskId, { status: newStatus });
-                    setTasks(prev => prev.map(task => 
-                        task.id === taskId ? { ...task, status: newStatus } : task
+                    const newStatus = task.status === 'completed' ? 'todo' : 'completed';
+                    console.log('Toggling task status:', taskId, 'from', task.status, 'to', newStatus);
+                    
+                    // Оптимистичное обновление UI
+                    setTasks(prev => prev.map(t => 
+                        t.id === taskId ? { ...t, status: newStatus } : t
                     ));
                     
-                    showNotification(newStatus === 'completed' ? 'Задача выполнена!' : 'Задача снова активна');
+                    await dataService.updateTask(taskId, { status: newStatus });
+                    
+                    showNotification(newStatus === 'completed' ? 'Задача выполнена! 🎉' : 'Задача снова активна');
                 } catch (error) {
-                    showNotification('Ошибка обновления задачи', 'error');
+                    console.error('Error toggling task status:', error);
+                    // Откатываем изменения при ошибке
+                    const task = tasks.find(t => t.id === taskId);
+                    if (task) {
+                        setTasks(prev => prev.map(t => 
+                            t.id === taskId ? { ...t, status: task.status } : t
+                        ));
+                    }
+                    showNotification('Ошибка обновления задачи: ' + (error.message || 'Неизвестная ошибка'), 'error');
                 }
             };
 
@@ -634,10 +673,14 @@
                     return;
                 }
                 
+                setLoading(true);
                 try {
+                    console.log('Creating task:', newTask);
                     const userId = selectedClient ? selectedClient.id : currentUser.id;
                     const task = await dataService.createTask(userId, newTask);
-                    setTasks(prev => [...prev, task]);
+                    console.log('Task created successfully:', task);
+                    
+                    setTasks(prev => [task, ...prev]); // Добавляем в начало списка
                     setNewTask({
                         title: '',
                         description: '',
@@ -650,7 +693,10 @@
                     setShowNewTaskForm(false);
                     showNotification('Задача создана!');
                 } catch (error) {
-                    showNotification('Ошибка создания задачи', 'error');
+                    console.error('Error creating task:', error);
+                    showNotification('Ошибка создания задачи: ' + (error.message || 'Неизвестная ошибка'), 'error');
+                } finally {
+                    setLoading(false);
                 }
             };
 
@@ -677,12 +723,28 @@
                 if (!notification) return null;
                 
                 return (
-                    <div className={`fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 fade-in ${
-                        notification.type === 'error' 
-                            ? 'bg-red-500 text-white' 
-                            : 'bg-green-500 text-white'
-                    }`}>
-                        {notification.message}
+                    <div 
+                        className={`fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 fade-in max-w-sm ${
+                            notification.type === 'error' 
+                                ? 'bg-red-500 text-white' 
+                                : 'bg-green-500 text-white'
+                        }`}
+                        style={{ zIndex: 9999 }}
+                    >
+                        <div className="flex items-start">
+                            <span className="mr-2">
+                                {notification.type === 'error' ? '❌' : '✅'}
+                            </span>
+                            <div className="flex-1">
+                                {notification.message}
+                            </div>
+                            <button 
+                                onClick={() => setNotification(null)}
+                                className="ml-2 text-white opacity-70 hover:opacity-100"
+                            >
+                                ✕
+                            </button>
+                        </div>
                     </div>
                 );
             };
@@ -1230,14 +1292,22 @@
                             <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 pt-4">
                                 <button
                                     onClick={createTask}
-                                    disabled={loading}
-                                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                    disabled={loading || !newTask.title || !newTask.plannedDate}
+                                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                                 >
-                                    {loading ? <LoadingSpinner /> : 'Создать задачу'}
+                                    {loading ? (
+                                        <>
+                                            <div className="loader mr-2" style={{width: '16px', height: '16px', borderWidth: '2px'}}></div>
+                                            Создаю...
+                                        </>
+                                    ) : (
+                                        'Создать задачу'
+                                    )}
                                 </button>
                                 <button
                                     onClick={() => setShowNewTaskForm(false)}
-                                    className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg hover:bg-gray-300 transition-colors"
+                                    disabled={loading}
+                                    className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
                                 >
                                     Отмена
                                 </button>
